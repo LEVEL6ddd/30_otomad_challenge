@@ -500,9 +500,12 @@ async function buildImage() {
   const gap = 12;
   const columns = 3;
   const cellWidth = (width - margin * 2 - gap * (columns - 1)) / columns;
-  const thumbWidth = 140;
-  const thumbHeight = 79;
-  const rowHeight = 182;
+  const thumbWidth = 128;
+  const thumbHeight = 72;
+  const cardPadding = 12;
+  const bandHeight = 52;
+  const cardHeight = 182;
+  const rowHeight = cardHeight + gap;
   const headerHeight = 190;
   const rows = Math.ceil(items.length / columns);
 
@@ -546,48 +549,63 @@ async function buildImage() {
   ctx.textAlign = "left";
   ctx.fillText(subtitleLine, subtitleX, 120);
 
-  // 動画の一覧
+  // 動画の一覧（1本ごとに、お題の帯と動画を1枚のカードにまとめる）
   let missingThumbs = 0;
   items.forEach((item, index) => {
     const x = margin + (index % columns) * (cellWidth + gap);
     const y = headerHeight + Math.floor(index / columns) * rowHeight;
-    const textX = x + thumbWidth + 10;
-    const textWidth = cellWidth - thumbWidth - 14;
+    const contentX = x + cardPadding;
+    const contentY = y + bandHeight + cardPadding;
+    const textX = contentX + thumbWidth + 10;
+    const textWidth = cellWidth - cardPadding * 2 - thumbWidth - 10;
     const thumb = thumbs[index];
 
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x, y, cellWidth, cardHeight, 10);
+    ctx.clip();
+    ctx.fillStyle = "#fafafa";
+    ctx.fillRect(x, y, cellWidth, cardHeight);
+    ctx.fillStyle = "#4d4d4d";
+    ctx.fillRect(x, y, cellWidth, bandHeight);
+    ctx.restore();
+
+    // お題
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 17px ${FONT}`;
+    const promptText = `${numbers[index]}. ${PROMPTS[numbers[index] - 1]}`;
+    const promptLines = fitLines(ctx, promptText, cellWidth - cardPadding * 2, 2);
+    const promptY = y + (bandHeight - promptLines.length * 22) / 2;
+    drawLines(ctx, promptLines, contentX, promptY, 22);
+
     if (thumb) {
-      drawCover(ctx, thumb, x, y, thumbWidth, thumbHeight);
+      drawCover(ctx, thumb, contentX, contentY, thumbWidth, thumbHeight);
     } else {
       missingThumbs += 1;
       ctx.fillStyle = "#d9d9d9";
-      ctx.fillRect(x, y, thumbWidth, thumbHeight);
+      ctx.fillRect(contentX, contentY, thumbWidth, thumbHeight);
       ctx.fillStyle = "#555555";
-      ctx.font = `700 15px ${FONT}`;
-      drawLines(ctx, fitLines(ctx, item.title, thumbWidth - 16, 3), x + 8, y + 8, 21);
+      ctx.font = `700 14px ${FONT}`;
+      drawLines(ctx, fitLines(ctx, item.title, thumbWidth - 12, 3), contentX + 6, contentY + 6, 19);
     }
 
     const videoId = videoIdOf(item);
     if (videoId) {
       ctx.fillStyle = "#6e6e6e";
       ctx.font = `500 16px ${FONT}`;
-      ctx.fillText(fitLines(ctx, videoId, thumbWidth, 1)[0], x, y + thumbHeight + 5);
+      ctx.fillText(fitLines(ctx, videoId, thumbWidth, 1)[0], contentX, contentY + thumbHeight + 5);
     }
 
     ctx.fillStyle = "#262626";
-    ctx.font = `700 22px ${FONT}`;
+    ctx.font = `700 21px ${FONT}`;
     const titleLines = fitLines(ctx, item.title, textWidth, 3);
-    drawLines(ctx, titleLines, textX, y - 4, 29);
+    drawLines(ctx, titleLines, textX, contentY - 4, 28);
 
     if (item.creator) {
       ctx.fillStyle = "#6e6e6e";
-      ctx.font = `500 17px ${FONT}`;
-      ctx.fillText(fitLines(ctx, item.creator, textWidth, 1)[0], textX, y - 2 + titleLines.length * 29);
+      ctx.font = `500 16px ${FONT}`;
+      ctx.fillText(fitLines(ctx, item.creator, textWidth, 1)[0], textX, contentY - 1 + titleLines.length * 28);
     }
-
-    ctx.fillStyle = "#555555";
-    ctx.font = `700 18px ${FONT}`;
-    const promptText = `${numbers[index]}. ${PROMPTS[numbers[index] - 1]}`;
-    drawLines(ctx, fitLines(ctx, promptText, cellWidth - 4, 2), x, y + 122, 24);
   });
 
   // ひとこと
