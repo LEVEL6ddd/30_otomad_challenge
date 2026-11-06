@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>30 OTOMAD CHALLENGE</title>
+  <meta name="description" content="30のお題に音MADを1本ずつ答えて、1枚の画像にまとめよう。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page">
+    <h1>30 OTOMAD CHALLENGE</h1>
+    <p class="lead">30のお題に、音MADを1本ずつ答えていきます。答えた動画は1枚の画像になります。全部そろっていなくても作れます。</p>
+    <p class="note">無料・ログイン不要・入力内容はこのブラウザに自動保存</p>
+
+    <p class="counter"><strong id="count">0</strong>/30本</p>
+    <div id="prompt-list" class="prompt-list"></div>
+
+    <section class="profile">
+      <label class="field">
+        <span class="field-label">ひとこと（任意・300文字まで）</span>
+        <textarea id="comment" maxlength="300" rows="4" placeholder="例：「思い出の音MAD」は迷わずこれでした。"></textarea>
+      </label>
+      <label class="field">
+        <span class="field-label">ニックネーム（必須）</span>
+        <input id="nickname" type="text" maxlength="30" placeholder="画像に表示されます">
+      </label>
+      <label class="field">
+        <span class="field-label">Xアカウント（任意）</span>
+        <input id="xid" type="text" maxlength="15" placeholder="@なしで入力" autocomplete="off">
+      </label>
+      <div class="field">
+        <span class="field-label">アイコン画像（任意）</span>
+        <div class="icon-row">
+          <div id="icon-preview" class="icon-preview">♪</div>
+          <label class="button button-outline button-grow">
+            画像を選ぶ
+            <input id="icon-file" class="visually-hidden" type="file" accept="image/*">
+          </label>
+          <button id="icon-clear" class="text-button" type="button" hidden>削除</button>
+        </div>
+      </div>
+    </section>
+
+    <button id="make" class="button button-primary" type="button" disabled>画像を作る（0本）</button>
+    <p id="make-hint" class="hint center" aria-live="polite"></p>
+
+    <section id="result" class="result" hidden>
+      <h2>できあがり</h2>
+      <img id="result-image" alt="30 OTOMAD CHALLENGEのまとめ画像">
+      <p id="result-warning" class="hint" hidden></p>
+      <a id="download" class="button button-primary" download="30-otomad-challenge.png">画像を保存</a>
+      <a id="share" class="button button-outline" target="_blank" rel="noopener">Xでポストする</a>
+      <p class="hint center">Xには保存した画像を添付してください。</p>
+      <button id="copy" class="button button-outline" type="button">動画リストをコピー</button>
+    </section>
+
+    <button id="reset" class="text-button reset" type="button">入力内容をすべて消す</button>
+  </main>
+
+  <script src="prompts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
