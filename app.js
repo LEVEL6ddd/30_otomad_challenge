@@ -33,10 +33,25 @@ function save() {
 
 /* ---------- URLの読み取り ---------- */
 
-function parseVideoUrl(text) {
+function niconicoVideo(id) {
+  return { site: "niconico", id, url: `https://www.nicovideo.jp/watch/${id}`, thumb: "" };
+}
+
+function bilibiliVideo(id) {
+  return { site: "bilibili", id, url: `https://www.bilibili.com/video/${id}`, thumb: "" };
+}
+
+function parseVideoUrl(input) {
+  const text = input.trim();
+
+  // 「sm9」「BV17x411w7KC」のように動画IDだけを入れた場合
+  if (/^(?:sm|nm|so)\d+$/.test(text)) return niconicoVideo(text);
+  if (/^BV[0-9A-Za-z]{10}$/.test(text)) return bilibiliVideo(text);
+  if (/^av\d+$/i.test(text)) return bilibiliVideo(text.toLowerCase());
+
   let url;
   try {
-    url = new URL(text.trim());
+    url = new URL(text);
   } catch {
     return null;
   }
@@ -49,6 +64,7 @@ function parseVideoUrl(text) {
     if (id && /^[\w-]{6,}$/.test(id)) {
       return {
         site: "youtube",
+        id,
         url: `https://www.youtube.com/watch?v=${id}`,
         thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
       };
@@ -56,23 +72,95 @@ function parseVideoUrl(text) {
   }
 
   if (host === "nicovideo.jp" || host === "nico.ms") {
-    const match = url.pathname.match(/((?:sm|nm|so)(\d+))/);
-    if (match) {
-      return {
-        site: "niconico",
-        url: `https://www.nicovideo.jp/watch/${match[1]}`,
-        thumb: match[1].startsWith("so") ? "" : `https://nicovideo.cdn.nimg.jp/thumbnails/${match[2]}/${match[2]}`,
-      };
-    }
+    const match = url.pathname.match(/(?:sm|nm|so)\d+/);
+    if (match) return niconicoVideo(match[0]);
+  }
+
+  if (host === "bilibili.com") {
+    const match = url.pathname.match(/\/video\/(BV[0-9A-Za-z]{10}|av\d+)/i);
+    if (match) return bilibiliVideo(match[1].startsWith("BV") ? match[1] : match[1].toLowerCase());
   }
   return null;
 }
 
-async function fetchYouTubeInfo(videoUrl) {
-  const api = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(videoUrl)}`;
+async function fetchYouTubeInfo(video) {
+  const api = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(video.url)}`;
   const response = await fetch(api);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  const info = await response.json();
+  return { title: info.title, creator: info.author_name, thumb: video.thumb };
+}
+
+// ニコニコ動画の公式の情報ページを、Jina Reader 経由で読み取る
+async function fetchNiconicoInfo(video) {
+  const api = `https://r.jina.ai/https://ext.nicovideo.jp/api/getthumbinfo/${video.id}`;
+  const response = await fetch(api, { headers: { "X-Return-Format": "html" } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
+  const read = (tag) => xml.querySelector(tag)?.textContent.trim() || "";
+  const title = read("title");
+  if (!title) throw new Error("動画が見つかりません");
+  return {
+    title,
+    creator: read("user_nickname") || read("ch_name"),
+    thumb: read("thumbnail_url"),
+  };
+}
+
+// ビリビリ動画の公式APIを、script タグ経由（JSONP）で読み取る
+function fetchBilibiliInfo(video) {
+  return new Promise((resolve, reject) => {
+    const callback = `bilibiliCallback${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const script = document.createElement("script");
+    const finish = () => {
+      clearTimeout(timer);
+      script.remove();
+      delete window[callback];
+    };
+    const timer = setTimeout(() => {
+      finish();
+      reject(new Error("timeout"));
+    }, 10000);
+
+    window[callback] = (result) => {
+      finish();
+      if (result?.code !== 0 || !result.data) {
+        reject(new Error("動画が見つかりません"));
+        return;
+      }
+      resolve({
+        title: result.data.title,
+        creator: result.data.owner?.name,
+        thumb: result.data.pic,
+        url: `https://www.bilibili.com/video/${result.data.bvid}`,
+      });
+    };
+    script.onerror = () => {
+      finish();
+      reject(new Error("読み込み失敗"));
+    };
+
+    const query = video.id.startsWith("av") ? `aid=${video.id.slice(2)}` : `bvid=${video.id}`;
+    script.src = `https://api.bilibili.com/x/web-interface/view?${query}&jsonp=jsonp&callback=${callback}`;
+    document.head.append(script);
+  });
+}
+
+function fetchVideoInfo(video) {
+  if (video.site === "youtube") return fetchYouTubeInfo(video);
+  if (video.site === "niconico") return fetchNiconicoInfo(video);
+  return fetchBilibiliInfo(video);
+}
+
+// ニコニコ・ビリビリのサムネイルは、そのままでは画像に合成できないので wsrv.nl を通す
+function thumbSource(src) {
+  if (!src || src.startsWith("data:") || src.includes("i.ytimg.com")) return src;
+  const target = src.replace(/^https?:\/\//, "");
+  return `https://wsrv.nl/?url=${encodeURIComponent(target)}&w=320&output=jpg`;
+}
+
+function videoIdOf(item) {
+  return item.url ? parseVideoUrl(item.url)?.id || "" : "";
 }
 
 /* ---------- 画像ファイルの読み込み ---------- */
@@ -117,7 +205,7 @@ function makeThumb(src) {
   image.alt = "";
   image.loading = "lazy";
   if (src) {
-    image.src = src;
+    image.src = thumbSource(src);
     image.onerror = () => { image.src = BLANK_IMAGE; };
   }
   return image;
@@ -139,7 +227,8 @@ function renderCard(number) {
     const row = makeElement("div", "video-row");
     const text = makeElement("div", "video-text");
     text.append(makeElement("p", "video-title", item.title));
-    if (item.creator) text.append(makeElement("p", "video-creator", item.creator));
+    const details = [item.creator, videoIdOf(item)].filter(Boolean).join(" / ");
+    if (details) text.append(makeElement("p", "video-creator", details));
 
     const actions = makeElement("div", "video-actions");
     const edit = makeElement("button", "text-button", "編集");
@@ -189,8 +278,10 @@ function makeEditor(number) {
   const editor = makeElement("form", "editor");
 
   const urlInput = makeElement("input");
-  urlInput.type = "url";
-  urlInput.placeholder = "ニコニコ動画・YouTubeのURL";
+  urlInput.type = "text";
+  urlInput.inputMode = "url";
+  urlInput.autocomplete = "off";
+  urlInput.placeholder = "URLまたは動画ID（sm9、BV17x411w7KC など）";
   urlInput.value = draft.url;
 
   const message = makeElement("p", "hint");
@@ -219,52 +310,50 @@ function makeEditor(number) {
     if (!file) return;
     try {
       draft.customThumb = await fileToDataUrl(file, 320);
-      preview.src = draft.customThumb;
+      showPreview();
     } catch {
       message.textContent = "この画像は読み込めませんでした。";
       message.classList.add("error");
     }
   };
 
+  const showPreview = () => {
+    preview.src = thumbSource(draft.customThumb || draft.thumb) || BLANK_IMAGE;
+  };
+
   urlInput.onchange = async () => {
     const text = urlInput.value.trim();
     message.classList.remove("error");
     message.textContent = "";
-    if (!text) {
-      draft.url = "";
-      draft.thumb = "";
-      preview.src = draft.customThumb || BLANK_IMAGE;
-      return;
-    }
+    draft.url = "";
+    draft.thumb = "";
+    showPreview();
+    if (!text) return;
 
     const video = parseVideoUrl(text);
     if (!video) {
-      draft.url = "";
-      draft.thumb = "";
       message.textContent = "このURLは読み取れませんでした。タイトルは手で入力できます。";
       message.classList.add("error");
       return;
     }
     draft.url = video.url;
     draft.thumb = video.thumb;
-    preview.src = draft.customThumb || video.thumb || BLANK_IMAGE;
-
-    if (video.site === "niconico") {
-      message.textContent = "ニコニコ動画はタイトルを自動で取得できないため、手で入力してください。まとめ画像にサムネイルを入れるには、画像ファイルを選んでください。";
-      titleInput.focus();
-      return;
-    }
+    showPreview();
 
     message.textContent = "動画の情報を取得しています…";
     try {
-      const info = await fetchYouTubeInfo(video.url);
+      const info = await fetchVideoInfo(video);
       if (draft.url !== video.url) return;
       titleInput.value = info.title || titleInput.value;
-      creatorInput.value = info.author_name || creatorInput.value;
+      creatorInput.value = info.creator || creatorInput.value;
+      draft.thumb = info.thumb || draft.thumb;
+      draft.url = info.url || draft.url;
+      urlInput.value = draft.url;
+      showPreview();
       message.textContent = "取得しました。";
     } catch {
       if (draft.url !== video.url) return;
-      message.textContent = "動画の情報を取得できませんでした。タイトルは手で入力してください。";
+      message.textContent = "動画の情報を取得できませんでした。動画IDを確認するか、少し待ってからもう一度試してください。タイトルは手で入力することもできます。";
       message.classList.add("error");
     }
   };
@@ -377,7 +466,7 @@ async function loadThumbForCanvas(item) {
   const src = item.customThumb || item.thumb;
   if (!src) return null;
   try {
-    return await loadImage(src, !src.startsWith("data:"));
+    return await loadImage(thumbSource(src), !src.startsWith("data:"));
   } catch {
     return null;
   }
@@ -394,7 +483,7 @@ async function buildImage() {
   const allText = [
     "30 OTOMAD CHALLENGE", nickname, comment, xid,
     ...numbers.map((number) => PROMPTS[number - 1]),
-    ...items.flatMap((item) => [item.title, item.creator]),
+    ...items.flatMap((item) => [item.title, item.creator, videoIdOf(item)]),
     "さんの本作0123456789.…@#",
   ].join("");
   await Promise.allSettled([
@@ -475,6 +564,13 @@ async function buildImage() {
       ctx.fillStyle = "#555555";
       ctx.font = `700 15px ${FONT}`;
       drawLines(ctx, fitLines(ctx, item.title, thumbWidth - 16, 3), x + 8, y + 8, 21);
+    }
+
+    const videoId = videoIdOf(item);
+    if (videoId) {
+      ctx.fillStyle = "#6e6e6e";
+      ctx.font = `500 16px ${FONT}`;
+      ctx.fillText(fitLines(ctx, videoId, thumbWidth, 1)[0], x, y + thumbHeight + 5);
     }
 
     ctx.fillStyle = "#262626";
