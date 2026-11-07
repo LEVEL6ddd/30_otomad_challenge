@@ -98,7 +98,7 @@ async function fetchNiconicoInfo(video) {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
   const read = (tag) => xml.querySelector(tag)?.textContent.trim() || "";
-  const title = read("title");
+  const title = read("thumb > title");
   if (!title) throw new Error("動画が見つかりません");
   return {
     title,
@@ -152,11 +152,30 @@ function fetchVideoInfo(video) {
   return fetchBilibiliInfo(video);
 }
 
-// ニコニコ・ビリビリのサムネイルは、そのままでは画像に合成できないので wsrv.nl を通す
-function thumbSource(src) {
-  if (!src || src.startsWith("data:") || src.includes("i.ytimg.com")) return src;
-  const target = src.replace(/^https?:\/\//, "");
-  return `https://wsrv.nl/?url=${encodeURIComponent(target)}&w=320&output=jpg`;
+// サムネイルの読み込み先の候補。上から順に試し、だめなら次を使う
+// ・ビリビリ: 参照元を送らなければ直接読める。だめなら wsrv.nl 経由
+// ・ニコニコ: そのままでは画像に合成できないので wsrv.nl 経由
+function thumbSources(src) {
+  if (!src) return [];
+  if (src.startsWith("data:") || src.includes("i.ytimg.com")) return [src];
+
+  const viaProxy = `https://wsrv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ""))}&w=320&output=jpg`;
+  if (/^https?:\/\/[^/]*hdslb\.com\//.test(src)) {
+    const direct = src.replace(/^http:/, "https:") + (src.includes("@") ? "" : "@320w_180h_1c.jpg");
+    return [direct, viaProxy];
+  }
+  return [viaProxy];
+}
+
+// 画像要素に、候補を順番に試しながらサムネイルを表示する
+function setThumb(image, src) {
+  const sources = thumbSources(src);
+  let index = 0;
+  image.onerror = () => {
+    index += 1;
+    image.src = sources[index] || BLANK_IMAGE;
+  };
+  image.src = sources[0] || BLANK_IMAGE;
 }
 
 function videoIdOf(item) {
@@ -169,6 +188,7 @@ function loadImage(src, useCors) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     if (useCors) image.crossOrigin = "anonymous";
+    image.referrerPolicy = "no-referrer";
     image.onload = () => resolve(image);
     image.onerror = reject;
     image.src = src;
@@ -204,10 +224,9 @@ function makeThumb(src) {
   const image = makeElement("img", "video-thumb");
   image.alt = "";
   image.loading = "lazy";
-  if (src) {
-    image.src = thumbSource(src);
-    image.onerror = () => { image.src = BLANK_IMAGE; };
-  }
+  image.crossOrigin = "anonymous";
+  image.referrerPolicy = "no-referrer";
+  setThumb(image, src);
   return image;
 }
 
@@ -298,7 +317,7 @@ function makeEditor(number) {
   creatorInput.maxLength = 50;
   creatorInput.value = draft.creator;
 
-  const preview = makeThumb(draft.customThumb || draft.thumb || BLANK_IMAGE);
+  const preview = makeThumb(draft.customThumb || draft.thumb);
   const fileLabel = makeElement("label", "button button-outline button-grow", "サムネイルを選ぶ");
   const fileInput = makeElement("input", "visually-hidden");
   fileInput.type = "file";
@@ -318,7 +337,7 @@ function makeEditor(number) {
   };
 
   const showPreview = () => {
-    preview.src = thumbSource(draft.customThumb || draft.thumb) || BLANK_IMAGE;
+    setThumb(preview, draft.customThumb || draft.thumb);
   };
 
   urlInput.onchange = async () => {
@@ -464,12 +483,14 @@ function drawCover(ctx, image, x, y, width, height) {
 
 async function loadThumbForCanvas(item) {
   const src = item.customThumb || item.thumb;
-  if (!src) return null;
-  try {
-    return await loadImage(thumbSource(src), !src.startsWith("data:"));
-  } catch {
-    return null;
+  for (const source of thumbSources(src)) {
+    try {
+      return await loadImage(source, !source.startsWith("data:"));
+    } catch {
+      // 次の候補を試す
+    }
   }
+  return null;
 }
 
 async function buildImage() {
